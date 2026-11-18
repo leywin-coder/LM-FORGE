@@ -2,6 +2,7 @@
 
 @layer base {
   :root {
+    color-scheme: dark;
     --bg-canvas: #121316;
     --bg-sidebar: #16181d;
     --bg-card: #1c1e24;
@@ -123,8 +124,9 @@
 
 /* Force dark style on native select and dropdown options */
 select,
-select option,
-select optgroup {
+option,
+optgroup {
+  color-scheme: dark !important;
   background-color: #1a1c22 !important;
   color: #f1f2f4 !important;
 }

@@ -3758,6 +3758,14 @@ function DiscoverView({
   const [searchResults, setSearchResults] = useState<HfModelItem[]>(curatedHfModels);
   const [searchError, setSearchError] = useState<string | null>(null);
 
+  // Hugging Face filter parameters
+  const [pipelineTag, setPipelineTag] = useState("all");
+  const [sortBy, setSortBy] = useState("downloads");
+  const [modelSize, setModelSize] = useState("all");
+  const [customTag, setCustomTag] = useState("");
+  const [authorFilter, setAuthorFilter] = useState("");
+  const [showFilters, setShowFilters] = useState(false);
+
   // Selected model for file customization
   const [selectedRepo, setSelectedRepo] = useState<HfModelItem | null>(null);
   const [repoFiles, setRepoFiles] = useState<HfRepoFileItem[]>([]);
@@ -3777,27 +3785,65 @@ function DiscoverView({
   const handleSearch = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const q = query.trim();
-    if (!q) {
-      setSearchResults(curatedHfModels);
-      return;
-    }
 
     setSearching(true);
     setSearchError(null);
 
     try {
-      // 1. Try real backend hf_search Tauri command
-      const results = await invoke<HfModelItem[]>("hf_search", { query: q, limit: 16 });
-      if (results && results.length > 0) {
-        setSearchResults(results);
+      // Build search query incorporating size if selected
+      const queryParts = [q];
+      if (modelSize !== "all" && !q.toLowerCase().includes(modelSize.toLowerCase())) {
+        queryParts.push(modelSize);
+      }
+      const combinedQuery = queryParts.filter(Boolean).join(" ");
+
+      // Build filter tags (gguf + custom tag if present)
+      const tags: string[] = ["gguf"];
+      if (customTag.trim()) {
+        tags.push(customTag.trim());
+      }
+
+      const results = await invoke<HfModelItem[]>("hf_search", {
+        query: combinedQuery,
+        filter: tags.join(","),
+        pipelineTag: pipelineTag !== "all" ? pipelineTag : null,
+        author: authorFilter.trim() || null,
+        sort: sortBy,
+        limit: 28,
+      });
+
+      // Filter locally by model size regex if specified
+      let filtered = results || [];
+      if (modelSize !== "all" && filtered.length > 0) {
+        const sizeRegex = new RegExp(`\\b${modelSize}\\b|[-_]${modelSize}[-_]`, "i");
+        const strictMatches = filtered.filter(
+          (m) => sizeRegex.test(m.id) || (m.tags && m.tags.some((t) => sizeRegex.test(t)))
+        );
+        if (strictMatches.length > 0) {
+          filtered = strictMatches;
+        }
+      }
+
+      if (filtered.length > 0) {
+        setSearchResults(filtered);
+      } else if (!q && pipelineTag === "all" && !customTag && !authorFilter && modelSize === "all") {
+        setSearchResults(curatedHfModels);
       } else {
-        // Fallback filter
-        const matched = curatedHfModels.filter((m) => m.id.toLowerCase().includes(q.toLowerCase()));
-        setSearchResults(matched);
+        setSearchResults([]);
+        setSearchError("No models found matching the selected filters.");
       }
     } catch (err: unknown) {
-      // Fallback search
-      const matched = curatedHfModels.filter((m) => m.id.toLowerCase().includes(q.toLowerCase()));
+      // Fallback search in curated list
+      let matched = curatedHfModels;
+      if (q) {
+        matched = matched.filter((m) => m.id.toLowerCase().includes(q.toLowerCase()));
+      }
+      if (modelSize !== "all") {
+        matched = matched.filter((m) => m.id.toLowerCase().includes(modelSize.toLowerCase()));
+      }
+      if (authorFilter.trim()) {
+        matched = matched.filter((m) => m.id.toLowerCase().startsWith(authorFilter.trim().toLowerCase()));
+      }
       setSearchResults(matched);
       setSearchError("Offline or network limited. Showing verified cached models.");
     } finally {
@@ -3896,25 +3942,125 @@ function DiscoverView({
       )}
 
       {/* Search Input Form */}
-      <form onSubmit={handleSearch} className="flex gap-2">
-        <div className="relative flex-1">
-          <Search size={13} className="absolute left-3 top-2.5 text-[#595d69]" />
-          <input
-            type="text"
-            placeholder="Search Hugging Face models (e.g. Qwen2.5, DeepSeek-R1, Llama-3.2, Mistral)..."
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            className="w-full bg-[#181a20] border border-[#282b34] text-xs text-[#f1f2f4] pl-8 pr-3 py-1.5 rounded outline-none focus:border-blue-500 transition-colors"
-          />
+      <form onSubmit={handleSearch} className="space-y-2">
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <Search size={13} className="absolute left-3 top-2.5 text-[#595d69]" />
+            <input
+              type="text"
+              placeholder="Search Hugging Face models (e.g. Qwen2.5, DeepSeek-R1, Llama-3.2, Mistral)..."
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="w-full bg-[#181a20] border border-[#282b34] text-xs text-[#f1f2f4] pl-8 pr-3 py-1.5 rounded outline-none focus:border-blue-500 transition-colors"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowFilters(!showFilters)}
+            className={`px-2.5 py-1.5 rounded border text-xs font-medium transition-colors flex items-center gap-1.5 ${
+              showFilters || pipelineTag !== "all" || sortBy !== "downloads" || modelSize !== "all" || customTag || authorFilter
+                ? "bg-[#2563eb]/20 border-blue-500/50 text-blue-400"
+                : "bg-[#181a20] border-[#282b34] text-[#8c919e] hover:text-[#f1f2f4]"
+            }`}
+            title="Toggle HF Filters"
+          >
+            <SlidersHorizontal size={13} />
+            <span>Filters</span>
+          </button>
+          <button
+            type="submit"
+            disabled={searching}
+            className="px-3 py-1.5 rounded bg-[#2563eb] hover:bg-[#1d4ed8] disabled:opacity-50 text-white text-xs font-medium transition-colors flex items-center gap-1.5"
+          >
+            {searching ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />}
+            <span>Search</span>
+          </button>
         </div>
-        <button
-          type="submit"
-          disabled={searching}
-          className="px-3 py-1.5 rounded bg-[#2563eb] hover:bg-[#1d4ed8] disabled:opacity-50 text-white text-xs font-medium transition-colors flex items-center gap-1.5"
-        >
-          {searching ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />}
-          <span>Search</span>
-        </button>
+
+        {/* Hugging Face Filters Bar */}
+        {showFilters && (
+          <div className="p-3 rounded bg-[#181a20] border border-[#282b34] grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3 text-xs">
+            {/* Model Size Filter */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-medium text-[#8c919e]">Model Size</label>
+              <select
+                value={modelSize}
+                onChange={(e) => setModelSize(e.target.value)}
+                className="w-full bg-[#141519] border border-[#282b34] text-xs text-[#f1f2f4] px-2 py-1.5 rounded outline-none focus:border-blue-500"
+              >
+                <option value="all">All Sizes</option>
+                <option value="1B">~1B (Ultra light)</option>
+                <option value="3B">~3B (Mobile / Low RAM)</option>
+                <option value="4B">~4B (Fast compact)</option>
+                <option value="7B">~7B (Standard)</option>
+                <option value="8B">~8B (Standard+)</option>
+                <option value="9B">~9B (Gemma / Qwen)</option>
+                <option value="12B">~12B (Mistral NeMo)</option>
+                <option value="14B">~14B (High accuracy)</option>
+                <option value="27B">~27B (Large)</option>
+                <option value="32B">~32B (Qwen / DeepSeek)</option>
+                <option value="70B">~70B (Max size)</option>
+              </select>
+            </div>
+
+            {/* Pipeline / Task Filter */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-medium text-[#8c919e]">Task / Pipeline</label>
+              <select
+                value={pipelineTag}
+                onChange={(e) => setPipelineTag(e.target.value)}
+                className="w-full bg-[#141519] border border-[#282b34] text-xs text-[#f1f2f4] px-2 py-1.5 rounded outline-none focus:border-blue-500"
+              >
+                <option value="all">All Tasks</option>
+                <option value="text-generation">Text Generation</option>
+                <option value="conversational">Conversational</option>
+                <option value="text-classification">Text Classification</option>
+                <option value="image-text-to-text">Vision / Multimodal</option>
+                <option value="feature-extraction">Embeddings</option>
+              </select>
+            </div>
+
+            {/* Sort Filter */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-medium text-[#8c919e]">Sort By</label>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                className="w-full bg-[#141519] border border-[#282b34] text-xs text-[#f1f2f4] px-2 py-1.5 rounded outline-none focus:border-blue-500"
+              >
+                <option value="downloads">Most Downloads</option>
+                <option value="likes">Most Likes</option>
+                <option value="trending">Trending</option>
+                <option value="lastModified">Recently Updated</option>
+                <option value="createdAt">Recently Created</option>
+              </select>
+            </div>
+
+            {/* Author / Org Filter */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-medium text-[#8c919e]">Author / Org</label>
+              <input
+                type="text"
+                placeholder="e.g. Qwen, TheBloke, bartowski"
+                value={authorFilter}
+                onChange={(e) => setAuthorFilter(e.target.value)}
+                className="w-full bg-[#141519] border border-[#282b34] text-xs text-[#f1f2f4] px-2 py-1.5 rounded outline-none focus:border-blue-500"
+              />
+            </div>
+
+            {/* Custom Tag Filter */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-medium text-[#8c919e]">Tag / Library</label>
+              <input
+                type="text"
+                placeholder="e.g. conversational, llama, reasoning"
+                value={customTag}
+                onChange={(e) => setCustomTag(e.target.value)}
+                className="w-full bg-[#141519] border border-[#282b34] text-xs text-[#f1f2f4] px-2 py-1.5 rounded outline-none focus:border-blue-500"
+              />
+            </div>
+          </div>
+        )}
       </form>
 
       {/* Discovered Models Grid */}

@@ -384,16 +384,66 @@ async fn unload_model() -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn hf_search(query: String, limit: Option<usize>) -> Result<Vec<HfModel>, String> {
+async fn hf_search(
+    query: String,
+    filter: Option<String>,
+    pipeline_tag: Option<String>,
+    author: Option<String>,
+    sort: Option<String>,
+    limit: Option<usize>,
+) -> Result<Vec<HfModel>, String> {
     let limit = limit.unwrap_or(20).min(40);
-    let encoded = query.replace(' ', "%20");
-    let url = format!(
-        "https://huggingface.co/api/models?search={}&filter=gguf&sort=downloads&direction=-1&limit={}",
-        encoded, limit
-    );
+    let mut query_params: Vec<(&str, String)> = Vec::new();
+
+    let trimmed_q = query.trim().to_string();
+    if !trimmed_q.is_empty() {
+        query_params.push(("search", trimmed_q));
+    }
+
+    // Default to gguf filter unless custom filters are given
+    let filter_str = filter.unwrap_or_default();
+    let mut filter_tags: Vec<String> = filter_str
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if !filter_tags.iter().any(|t| t == "gguf") {
+        filter_tags.push("gguf".to_string());
+    }
+    for tag in filter_tags {
+        query_params.push(("filter", tag));
+    }
+
+    if let Some(pt) = pipeline_tag {
+        let pt_trimmed = pt.trim().to_string();
+        if !pt_trimmed.is_empty() && pt_trimmed != "all" {
+            query_params.push(("pipeline_tag", pt_trimmed));
+        }
+    }
+
+    if let Some(auth) = author {
+        let auth_trimmed = auth.trim().to_string();
+        if !auth_trimmed.is_empty() {
+            query_params.push(("author", auth_trimmed));
+        }
+    }
+
+    let sort_val = sort.as_deref().unwrap_or("downloads");
+    let valid_sort = match sort_val {
+        "likes" => "likes",
+        "lastModified" => "lastModified",
+        "createdAt" => "createdAt",
+        "trending" | "trendingScore" => "trendingScore",
+        _ => "downloads",
+    };
+    query_params.push(("sort", valid_sort.to_string()));
+    query_params.push(("direction", "-1".to_string()));
+    query_params.push(("limit", limit.to_string()));
+
     let client = Client::new();
     let resp = client
-        .get(&url)
+        .get("https://huggingface.co/api/models")
+        .query(&query_params)
         .send()
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
