@@ -1,3 +1,5 @@
+import { invoke } from "@tauri-apps/api/core";
+
 // ==========================================
 // Local AI Workstation — Settings Architecture
 // Comprehensive typed settings with persistent storage
@@ -181,7 +183,9 @@ export function loadWorkstationSettings(): WorkstationSettings {
 
 export function saveWorkstationSettings(settings: WorkstationSettings): void {
   try {
-    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings, null, 2));
+    const json = JSON.stringify(settings, null, 2);
+    localStorage.setItem(SETTINGS_STORAGE_KEY, json);
+    invoke("save_app_state", { key: "workstation_settings_v2", data: json }).catch(() => {});
   } catch (err) {
     console.error("Failed to save workstation settings:", err);
   }

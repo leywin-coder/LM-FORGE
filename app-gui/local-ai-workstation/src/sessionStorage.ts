@@ -1,7 +1,10 @@
+import { invoke } from "@tauri-apps/api/core";
+
 // ============================================================================
 // Chat Session Management & Persistence Service
 // Handles conversation persistence, archiving, pinning, date grouping,
 // search, and interrupted generation states.
+// Backed by filesystem via Tauri with localStorage fallback.
 // ============================================================================
 
 export interface MessageStats {
@@ -128,16 +131,22 @@ export function loadActiveSessionId(availableSessions: ConversationSession[]): s
 }
 
 /**
- * Persist sessions to storage safely.
+ * Persist sessions to storage safely (both filesystem and localStorage).
  */
 export function persistSessions(sessions: ConversationSession[], activeId?: string) {
   try {
-    localStorage.setItem(STORAGE_KEY_SESSIONS, JSON.stringify(sessions));
+    const json = JSON.stringify(sessions);
+    localStorage.setItem(STORAGE_KEY_SESSIONS, json);
     if (activeId) {
       localStorage.setItem(STORAGE_KEY_ACTIVE_ID, activeId);
     }
+    // Async background filesystem backup via Rust
+    invoke("save_app_state", { key: "conversations_v3", data: json }).catch(() => {});
+    if (activeId) {
+      invoke("save_app_state", { key: "active_session_v3", data: activeId }).catch(() => {});
+    }
   } catch (err) {
-    console.error("Failed to persist sessions to localStorage:", err);
+    console.error("Failed to persist sessions:", err);
   }
 }
 

@@ -163,21 +163,98 @@ fn get_models() -> Vec<ModelInfo> {
         .unwrap_or_default()
 }
 
+fn get_app_config_dir() -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("lm-forge")
+}
+
+#[tauri::command]
+fn save_app_state(key: String, data: String) -> Result<(), String> {
+    let dir = get_app_config_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create config dir: {}", e))?;
+    let path = dir.join(format!("{}.json", key));
+    std::fs::write(&path, data).map_err(|e| format!("Failed to write app state {}: {}", key, e))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn load_app_state(key: String) -> Result<Option<String>, String> {
+    let path = get_app_config_dir().join(format!("{}.json", key));
+    if !path.exists() {
+        return Ok(None);
+    }
+    let data = std::fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read app state {}: {}", key, e))?;
+    Ok(Some(data))
+}
+
+#[tauri::command]
+async fn run_model_benchmark(
+    path: String,
+    prompt_tokens: Option<usize>,
+    gen_tokens: Option<usize>,
+    threads: Option<i32>,
+) -> Result<serde_json::Value, String> {
+    let model_path = PathBuf::from(&path);
+    if !model_path.exists() {
+        return Err(format!("Model not found at: {}", path));
+    }
+
+    let p_toks = prompt_tokens.unwrap_or(512);
+    let g_toks = gen_tokens.unwrap_or(128);
+    let th = threads.unwrap_or(4);
+
+    let start = Instant::now();
+    let params = RuntimeParams {
+        n_ctx: (p_toks + g_toks + 64) as u32,
+        n_threads: th,
+        max_tokens: g_toks,
+        ..Default::default()
+    };
+
+    let engine = InferenceEngine::load(&model_path, params)
+        .map_err(|e| format!("Benchmark failed to load model: {}", e))?;
+
+    let test_prompt = "Hello ".repeat(p_toks / 2);
+    let prompt_start = Instant::now();
+    let mut rx = engine.generate_stream(&test_prompt, &engine.runtime_params, None).await;
+    let mut count = 0;
+    while let Some(_) = rx.recv().await {
+        count += 1;
+    }
+    let elapsed = prompt_start.elapsed().as_secs_f64();
+    let total_time = start.elapsed().as_secs_f64();
+    let tok_per_sec = if elapsed > 0.0 { (count as f64) / elapsed } else { 0.0 };
+
+    Ok(serde_json::json!({
+        "model": model_path.file_name().unwrap_or_default().to_string_lossy(),
+        "prompt_tokens": p_toks,
+        "gen_tokens": count,
+        "threads": th,
+        "tokens_per_second": (tok_per_sec * 100.0).round() / 100.0,
+        "total_elapsed_seconds": (total_time * 100.0).round() / 100.0,
+    }))
+}
+
 #[tauri::command]
 async fn load_model(path: String) -> Result<String, String> {
     let model_path = PathBuf::from(&path);
     let engine = InferenceEngine::load(&model_path, RuntimeParams::default())?;
     let name = model_path.file_name().unwrap_or_default().to_string_lossy().to_string();
 
-    *ENGINE.write().unwrap() = Some(Arc::new(engine));
+    let mut guard = ENGINE.write().map_err(|e| format!("Engine lock error: {}", e))?;
+    *guard = Some(Arc::new(engine));
 
     Ok(name)
 }
 
 #[tauri::command]
 async fn cancel_generation() -> Result<(), String> {
-    if let Some(ref engine) = *ENGINE.read().unwrap() {
-        engine.cancel_active();
+    if let Ok(guard) = ENGINE.read() {
+        if let Some(ref engine) = *guard {
+            engine.cancel_active();
+        }
     }
     Ok(())
 }
@@ -283,23 +360,26 @@ async fn chat_completions(window: tauri::Window, request: ChatRequest) -> Result
 
 #[tauri::command]
 async fn check_server_status(_port: Option<u16>) -> bool {
-    ENGINE.read().unwrap().is_some()
+    ENGINE.read().map(|g| g.is_some()).unwrap_or(false)
 }
 
 #[tauri::command]
 fn get_loaded_model() -> Option<String> {
-    ENGINE.read().unwrap().as_ref().map(|e| {
-        e.model_path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string()
+    ENGINE.read().ok().and_then(|g| {
+        g.as_ref().map(|e| {
+            e.model_path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string()
+        })
     })
 }
 
 #[tauri::command]
 async fn unload_model() -> Result<(), String> {
-    *ENGINE.write().unwrap() = None;
+    let mut guard = ENGINE.write().map_err(|e| format!("Engine lock error: {}", e))?;
+    *guard = None;
     Ok(())
 }
 
@@ -1111,7 +1191,10 @@ pub fn run() {
             cancel_generation,
             get_model_metadata,
             get_system_metrics,
-            get_machine_specs
+            get_machine_specs,
+            save_app_state,
+            load_app_state,
+            run_model_benchmark
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

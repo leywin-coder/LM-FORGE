@@ -3127,6 +3127,29 @@ function ModelsView({
   const [detailedModels, setDetailedModels] = useState<LocalModelDetailedItem[]>([]);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameInput, setRenameInput] = useState("");
+  const [benchmarkingId, setBenchmarkingId] = useState<string | null>(null);
+  const [benchResults, setBenchResults] = useState<Record<string, { tokPerSec: number; elapsed: number }>>({});
+
+  const handleBenchmark = async (model: ModelInfo) => {
+    setBenchmarkingId(model.id);
+    try {
+      const res = await invoke<{ tokens_per_second: number; total_elapsed_seconds: number }>(
+        "run_model_benchmark",
+        { path: model.path, promptTokens: 256, genTokens: 64, threads: 4 }
+      );
+      if (res) {
+        setBenchResults((prev) => ({
+          ...prev,
+          [model.id]: { tokPerSec: res.tokens_per_second, elapsed: res.total_elapsed_seconds },
+        }));
+      }
+    } catch (err) {
+      console.error("Benchmark failed:", err);
+      alert(`Benchmark failed: ${err}`);
+    } finally {
+      setBenchmarkingId(null);
+    }
+  };
 
   const refreshDetailed = async () => {
     try {
@@ -3402,9 +3425,39 @@ function ModelsView({
                     </span>
                   </div>
 
-                  <div className="col-span-2 font-mono text-[#8c919e]">{formatBytes(m.size)}</div>
+                  <div className="col-span-2 font-mono text-[#8c919e]">
+                    <div>{formatBytes(m.size)}</div>
+                    {benchResults[m.id] && (
+                      <div className="text-[10px] text-emerald-400 font-semibold">
+                        {benchResults[m.id].tokPerSec} t/s
+                      </div>
+                    )}
+                  </div>
 
                   <div className="col-span-3 flex items-center justify-end gap-1.5">
+                    {/* Benchmark Button */}
+                    <button
+                      onClick={() => handleBenchmark(m)}
+                      disabled={benchmarkingId !== null || modelStatus === "loading"}
+                      className={`px-2 py-0.5 rounded text-[11px] font-mono border transition-colors flex items-center gap-1 ${
+                        benchmarkingId === m.id
+                          ? "bg-amber-950/40 border-amber-700/60 text-amber-300"
+                          : "bg-[#181a20] hover:bg-[#22252e] text-[#8c919e] hover:text-[#f1f2f4] border-[#2b2e38]"
+                      }`}
+                      title="Run quick 64-token speed test on this model"
+                    >
+                      {benchmarkingId === m.id ? (
+                        <>
+                          <Loader2 size={10} className="animate-spin text-amber-400" />
+                          <span>Bench...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Zap size={10} className="text-amber-400" />
+                          <span>Bench</span>
+                        </>
+                      )}
+                    </button>
                     {renamingId !== m.id && (
                       <button
                         onClick={() => handleStartRename(m.id)}
