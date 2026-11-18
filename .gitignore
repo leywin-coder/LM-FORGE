@@ -1,0 +1,20 @@
+# Rust build output
+/target/
+
+# Local models and application data
+/models/
+
+# Node and pnpm generated files
+/node_modules/
+/.pnpm-store/
+/app-gui/**/node_modules/
+/app-gui/**/target/
+/app-gui/**/dist/
+
+# Local backups and archives
+/app-gui/*.backup_*/
+*.zip
+
+# OS/editor files
+.DS_Store
+*.swp

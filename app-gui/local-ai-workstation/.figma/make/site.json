@@ -1,0 +1,10 @@
+{
+  "description": "Discover, download, manage, and chat with local AI models, or host them through an OpenAI-compatible API with hardware and performance monitoring.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}

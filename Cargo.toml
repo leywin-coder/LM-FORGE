@@ -1,0 +1,27 @@
+[package]
+name = "lm-studio"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.8", default-features = false, features = ["tokio", "http1", "json"] }
+clap = { version = "4.5", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
+futures-util = "0.3"
+minijinja = "2.7"
+memmap2 = "0.9"
+sha2 = "0.10"
+eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+egui = "0.31"
+llama-cpp-2 = { version = "0.1.161", features = ["sampler", "openmp"] }
+
+[[bin]]
+name = "lm-studio"
+path = "src/main.rs"
+
+[[bin]]
+name = "lms"
+path = "src/bin/lms.rs"
